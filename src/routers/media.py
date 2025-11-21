@@ -2,9 +2,13 @@
 
 from fastapi import APIRouter, Depends
 
-from src.security import verify_wsse
+from src.security import require_roles
 
-router = APIRouter(prefix="/media", tags=["media"], dependencies=[Depends(verify_wsse)])
+router = APIRouter(
+    prefix="/media",
+    tags=["media"],
+    dependencies=[Depends(require_roles(["viewer", "operator", "admin"]))],
+)
 
 
 @router.get("/profiles")

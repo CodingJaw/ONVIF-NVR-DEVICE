@@ -5,9 +5,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 
 from src.config import get_config_manager
-from src.security import verify_wsse
+from src.security import require_roles
 
-router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(verify_wsse)])
+router = APIRouter(
+    prefix="/events",
+    tags=["events"],
+    dependencies=[Depends(require_roles(["operator", "admin"]))],
+)
 config_manager = get_config_manager()
 
 

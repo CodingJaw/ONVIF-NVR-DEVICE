@@ -2,9 +2,13 @@
 
 from fastapi import APIRouter, Depends
 
-from src.security import verify_wsse
+from src.security import require_roles
 
-router = APIRouter(prefix="/recording", tags=["recording"], dependencies=[Depends(verify_wsse)])
+router = APIRouter(
+    prefix="/recording",
+    tags=["recording"],
+    dependencies=[Depends(require_roles(["operator", "admin"]))],
+)
 
 
 @router.get("/jobs")
