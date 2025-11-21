@@ -1,0 +1,15 @@
+[Unit]
+Description=ONVIF NVR Device API
+After=network.target
+
+[Service]
+Type=simple
+Environment=SERVICE_HOST=0.0.0.0
+Environment=SERVICE_PORT=8000
+WorkingDirectory=/opt/onvif-nvr-device
+ExecStart=/usr/bin/python3 -m uvicorn src.main:app --host ${SERVICE_HOST} --port ${SERVICE_PORT}
+Restart=on-failure
+User=onvif
+
+[Install]
+WantedBy=multi-user.target
