@@ -6,6 +6,7 @@ import os
 import tempfile
 import threading
 from datetime import time
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional, Type, TypeVar
 
@@ -43,10 +44,22 @@ class ScheduleEntry(BaseModel):
         return end_value
 
 
+class EventPipelineMode(str, Enum):
+    """Modes the NVR uses to interpret incoming signals."""
+
+    motion = "motion"
+    event = "event"
+    alarm = "alarm"
+
+
 class UserSettings(BaseModel):
     """User-tunable runtime settings."""
 
     recording_schedules: list[ScheduleEntry] = Field(default_factory=list)
+    digital_inputs: list[dict[str, Any]] = Field(default_factory=list)
+    digital_outputs: list[dict[str, Any]] = Field(default_factory=list)
+    recording_triggers: list[str] = Field(default_factory=list)
+    event_pipeline_mode: EventPipelineMode = EventPipelineMode.event
     events_enabled: bool = True
     alarms_enabled: bool = True
 
@@ -137,6 +150,16 @@ class ConfigManager:
                     days=list(_ALLOWED_DAYS),
                 )
             ],
+            digital_inputs=[
+                {"channel_id": idx + 1, "direction": "input", "name": f"DI-{idx+1}", "state": False}
+                for idx in range(4)
+            ],
+            digital_outputs=[
+                {"channel_id": idx + 1, "direction": "output", "name": f"DO-{idx+1}", "state": False}
+                for idx in range(4)
+            ],
+            recording_triggers=[],
+            event_pipeline_mode=EventPipelineMode.event,
             events_enabled=True,
             alarms_enabled=True,
         )
