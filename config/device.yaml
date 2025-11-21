@@ -1,0 +1,6 @@
+manufacturer: OpenAI Labs
+model: ONVIF Reference NVR
+firmware_version: "0.1.0"
+serial_number: DEV-0001
+hardware_id: raspberrypi
+developer_notes: null

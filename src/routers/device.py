@@ -2,20 +2,19 @@
 
 from fastapi import APIRouter, Depends
 
+from src.config import get_config_manager
 from src.security import verify_wsse
 
 router = APIRouter(prefix="/device", tags=["device"], dependencies=[Depends(verify_wsse)])
 
+config_manager = get_config_manager()
+
 
 @router.get("/information")
 def get_device_information() -> dict[str, str]:
-    return {
-        "manufacturer": "OpenAI Labs",
-        "model": "ONVIF Reference NVR",
-        "firmware_version": "0.1.0",
-        "serial_number": "DEV-0001",
-        "hardware_id": "raspberrypi",
-    }
+    metadata = config_manager.get_device_metadata()
+    response = metadata.model_dump()
+    return {key: str(value) for key, value in response.items() if value is not None}
 
 
 @router.get("/capabilities")
