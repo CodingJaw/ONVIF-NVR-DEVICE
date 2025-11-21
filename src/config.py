@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Type, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 
 _ALLOWED_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
@@ -52,6 +58,50 @@ class EventPipelineMode(str, Enum):
     alarm = "alarm"
 
 
+class RecordingMode(str, Enum):
+    """Preferred recording behavior."""
+
+    continuous = "continuous"
+    schedule = "schedule"
+    on_event = "on_event"
+
+
+class NetworkMode(str, Enum):
+    """Supported network provisioning strategies."""
+
+    dhcp = "dhcp"
+    static = "static"
+
+
+class NetworkSettings(BaseModel):
+    """Network configuration options for an interface."""
+
+    mode: NetworkMode = NetworkMode.dhcp
+    interface: str = "eth0"
+    hostname: str = "onvif-nvr"
+    static_ip: Optional[str] = None
+    subnet_mask: Optional[str] = None
+    gateway: Optional[str] = None
+    dns_servers: list[str] = Field(default_factory=list)
+
+    @field_validator("static_ip", "subnet_mask", "gateway")
+    @classmethod
+    def validate_static_requirements(
+        cls, value: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
+        mode: NetworkMode = info.data.get("mode", NetworkMode.dhcp)
+        if mode == NetworkMode.static and not value:
+            raise ValueError("Static networking requires IP, subnet mask, and gateway")
+        return value
+
+
+class NTPSettings(BaseModel):
+    """NTP server configuration and enablement."""
+
+    enabled: bool = True
+    servers: list[str] = Field(default_factory=lambda: ["pool.ntp.org"])
+
+
 class UserSettings(BaseModel):
     """User-tunable runtime settings."""
 
@@ -62,6 +112,10 @@ class UserSettings(BaseModel):
     event_pipeline_mode: EventPipelineMode = EventPipelineMode.event
     events_enabled: bool = True
     alarms_enabled: bool = True
+    recording_mode: RecordingMode = RecordingMode.schedule
+    recording_enabled: bool = True
+    network: NetworkSettings = Field(default_factory=NetworkSettings)
+    ntp: NTPSettings = Field(default_factory=NTPSettings)
 
 
 class DeviceMetadata(BaseModel):
@@ -162,6 +216,10 @@ class ConfigManager:
             event_pipeline_mode=EventPipelineMode.event,
             events_enabled=True,
             alarms_enabled=True,
+            recording_mode=RecordingMode.schedule,
+            recording_enabled=True,
+            network=NetworkSettings(),
+            ntp=NTPSettings(),
         )
 
     def _default_device_metadata(self) -> DeviceMetadata:
