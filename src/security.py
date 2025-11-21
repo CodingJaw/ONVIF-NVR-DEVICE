@@ -1,18 +1,40 @@
 """WS-Security authentication helpers for ONVIF-style services."""
 
-from typing import Optional
+from __future__ import annotations
 
-from fastapi import Header, HTTPException, status
+import re
+from typing import Iterable, Optional
+
+from fastapi import Depends, Header, HTTPException, status
+
+from src.users import AuthenticatedUser, UserStore, get_user_store
 
 
-def verify_wsse(username_token: Optional[str] = Header(default=None, convert_underscores=False)) -> str:
-    """
-    Basic WS-Security UsernameToken hook.
+_TOKEN_PATTERN = re.compile(
+    r"UsernameToken\s+username=\"(?P<username>[^\"]+)\"\s+password=\"(?P<password>[^\"]+)\"",
+    re.IGNORECASE,
+)
 
-    In production, this function should parse the `Security` SOAP header and validate
-    digests or password text according to ONVIF/WS-Security profiles. For this sample,
-    we accept a simplified `UsernameToken` header value and reject missing tokens.
-    """
+
+def _parse_username_token(username_token: str) -> tuple[str, str]:
+    """Extract credentials from a UsernameToken header."""
+
+    match = _TOKEN_PATTERN.search(username_token)
+    if match:
+        return match.group("username"), match.group("password")
+
+    if ":" in username_token:
+        username, password = username_token.split(":", 1)
+        return username, password
+
+    raise ValueError("Malformed UsernameToken header")
+
+
+def verify_wsse(
+    username_token: Optional[str] = Header(default=None, convert_underscores=False),
+    store: UserStore = Depends(get_user_store),
+) -> AuthenticatedUser:
+    """Validate WS-Security UsernameToken credentials using the configured user store."""
 
     if not username_token:
         raise HTTPException(
@@ -20,12 +42,29 @@ def verify_wsse(username_token: Optional[str] = Header(default=None, convert_und
             detail="Missing WS-Security UsernameToken header",
         )
 
-    # Placeholder for credential verification. Swap with real user lookup or HMAC checks.
-    if username_token != "devuser:devpass":
+    try:
+        username, password = _parse_username_token(username_token)
+        user = store.authenticate(username, password)
+    except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid WS-Security credentials",
-        )
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
 
-    return username_token
+    return AuthenticatedUser(username=user.username, roles=user.roles)
+
+
+def require_roles(allowed_roles: Iterable[str]):
+    """Dependency factory enforcing that the user has one of the allowed roles."""
+
+    allowed = set(allowed_roles)
+
+    def dependency(user: AuthenticatedUser = Depends(verify_wsse)) -> AuthenticatedUser:
+        if not set(user.roles) & allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient role permissions",
+            )
+        return user
+
+    return dependency
 

@@ -3,9 +3,13 @@
 from fastapi import APIRouter, Depends
 
 from src.config import get_config_manager
-from src.security import verify_wsse
+from src.security import require_roles
 
-router = APIRouter(prefix="/device", tags=["device"], dependencies=[Depends(verify_wsse)])
+router = APIRouter(
+    prefix="/device",
+    tags=["device"],
+    dependencies=[Depends(require_roles(["viewer", "operator", "admin"]))],
+)
 
 config_manager = get_config_manager()
 
