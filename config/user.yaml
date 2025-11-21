@@ -1,0 +1,14 @@
+recording_schedules:
+  - name: Always
+    start: "00:00:00"
+    end: "23:59:00"
+    days:
+      - Mon
+      - Tue
+      - Wed
+      - Thu
+      - Fri
+      - Sat
+      - Sun
+events_enabled: true
+alarms_enabled: true
