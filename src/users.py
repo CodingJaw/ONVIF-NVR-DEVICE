@@ -54,7 +54,10 @@ class UserStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        # Use PBKDF2-SHA256 for hashing to avoid strict bcrypt backend/version
+        # coupling that can cause runtime failures when optional dependencies
+        # are missing or incompatible.
+        self._pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
         self._users: dict[str, User] | None = None
         self._ensure_default_admin()
 

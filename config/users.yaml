@@ -1,0 +1,4 @@
+admin:
+  password_hash: $pbkdf2-sha256$29000$Y6yV8p6zNgZAKIWQEqI0pg$/hjK0zEeQNHnOKQBM3.4XR0rZr3PswhdDHy8mfN12fY
+  roles:
+  - admin
