@@ -8,7 +8,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from src.discovery import WSDiscoveryResponder
-from src.routers import device, events, media, ptz, recording, users
+from src.routers import device, events, media, ptz, recording, system, users
+from src import soap
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ def create_app() -> FastAPI:
     app.include_router(events.router)
     app.include_router(recording.router)
     app.include_router(ptz.router)
+    app.include_router(system.router)
     app.include_router(users.router)
+    app.include_router(soap.router)
     return app
 
 

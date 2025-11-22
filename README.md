@@ -8,13 +8,7 @@ Minimal ONVIF Profile S-style reference service intended for DVR/NVR interoperab
 - Consolidated REST stubs for device/media/events/recording/PTZ into a single service entrypoint (`src/main.py`).
 - Added YAML-backed persistence for device metadata and user-facing schedules/alarms so settings survive restarts.
 - Introduced WS-Security UsernameToken parsing with role-based authorization and default admin bootstrap.
-- Added configuration validation and atomic writes so the device state remains consistent after power loss or reboots.
-
-## Project layout
-- `src/` – FastAPI app, ONVIF-like routers, WS-Discovery responder, WS-Security helpers, and CLI utilities.
-- `config/` – YAML files for device metadata (`device.yaml`), user settings (`user.yaml`), and user database (`users.yaml`).
-- `deploy/` – Docker and systemd-friendly assets for running the service on Raspberry Pi.
-- `requirements.txt` – Python dependencies for the service and tooling.
+- Added a lightweight media pipeline manager that binds ONVIF profiles to RTSP URIs and snapshot placeholders.
 
 ## Features implemented
 - WS-Discovery responder announcing the service address on UDP 3702.
@@ -59,23 +53,8 @@ Start the FastAPI app with the built-in WS-Discovery responder:
 SERVICE_HOST=0.0.0.0 SERVICE_PORT=8000 uvicorn src.main:app
 ```
 - REST API: `http://<host>:8000`
-- RTSP placeholder URI: `rtsp://<host>:8554/profile1` (no media pipeline yet)
+- RTSP server: `rtsp://<host>:8554/<profile_token>`
 - WS-Discovery: UDP 3702 multicast responses announcing the above address
-
-### Development tips
-- Run the service with auto-reload while iterating:
-  ```bash
-  SERVICE_HOST=0.0.0.0 SERVICE_PORT=8000 uvicorn src.main:app --reload
-  ```
-- Lint and type-check before committing:
-  ```bash
-  ruff src
-  mypy src
-  ```
-- Run the lightweight test suite (if you add tests under `tests/`):
-  ```bash
-  pytest
-  ```
 
 ### Example WS-Security header
 All protected routes require a WS-Security UsernameToken header. Example using the default admin account:
@@ -113,7 +92,7 @@ All commands read/write `config/users.yaml` with atomic updates.
 
 ## API highlights
 - **Device**: `GET /device/information`, `GET /device/capabilities`
-- **Media**: `GET /media/profiles`, `GET /media/stream_uri?profile_token=profile1`
+- **Media**: `GET /media/profiles`, `GET /media/stream_uri?profile_token=profile1`, `PUT /media/profiles/{token}` to tune resolution/bitrate/frame rate
 - **Events**: `GET /events/subscription`, `GET /events/pull`, `POST /events/mode/{motion|event|alarm}`, `POST /events/digital/{input|output}/{channel_id}`, `POST /events/schedules`
 - **Recording**: `GET /recording/jobs`, `POST /recording/jobs`, `POST /recording/schedules`
 - **PTZ**: `POST /ptz/move`, `POST /ptz/stop`
@@ -125,26 +104,29 @@ All commands read/write `config/users.yaml` with atomic updates.
   - `recording_triggers`: tokens pushed by `/recording/jobs`
   - `event_pipeline_mode`: `event`/`motion`/`alarm`
   - `events_enabled` / `alarms_enabled`: master switches for notification flow
+  - `media_profiles`: encoder settings (token, resolution, bitrate, frame rate)
 - `config/device.yaml`
   - `manufacturer`, `model`, `firmware_version`, `serial_number`, `hardware_id`, optional `developer_notes`
 - `config/users.yaml`
   - Auto-created with admin account; stores bcrypt hashes and role assignments
 
+## Media pipeline
+- Default profiles loaded from `config/user.yaml`:
+  - `profile1` – 1920x1080 @ 30fps, 8Mbps
+  - `profile2` – 1280x720 @ 15fps, 4Mbps
+- `GET /media/profiles` returns the configured profiles, RTSP URI, source type (camera/testscreen/bouncing_ball/image/mpeg), and last-known pipeline string with overlays.
+- `GET /media/stream_uri?profile_token=...` starts or reuses the mapped pipeline and returns the RTSP URI.
+- `PUT /media/profiles/{token}` adjusts resolution/bitrate/frame rate and source material (test screens, bouncing ball, static image, MPEG file) and persists the change back to `config/user.yaml`.
+- Snapshot placeholders are emitted to `config/snapshots/<token>.png` for basic ONVIF snapshot interoperability.
+- All generated pipelines stamp the hostname and live date/time in the top overlay for easy identification when testing.
+
 ## What's missing for full ONVIF compliance
 - SOAP service surfaces for Device/Media/Event/Recording/PTZ (currently REST-only stubs).
-- Real media pipeline (encoder settings, RTSP/RTP streaming, snapshots) instead of static URIs.
+- Hardware-validated media streaming and snapshot capture (current pipelines are libcamera/GStreamer examples).
 - Event delivery filters, pull-point/subscription lifecycles, and full topic set.
 - Recording search, export, and NVR-side state transitions beyond simple triggers.
 - Network/NTP configuration plumbing for Raspberry Pi (DHCP/static, DNS, hostname updates).
 - GUI setup pages and hardening (audit logs, rate limits, TLS termination).
-
-## Roadmap to full device readiness
-- **Short term**: Implement ONVIF SOAP surfaces for Device/Media/Event/Recording/PTZ; back them with the existing FastAPI logic; add conformance responses and WS-Security enforcement.
-- **Media pipeline**: Integrate a real encoder (e.g., GStreamer/libcamera on RPi) that serves H.264 RTSP streams and snapshots; expose configurable media profiles.
-- **Events**: Build pull-point subscription lifecycles with topic filters, renewals, and notification sequencing; wire digital IO and scheduler events to ONVIF topics.
-- **Recording**: Add search/export jobs with indexed recordings and ONVIF Recording service operations; persist metadata for NVR control flows.
-- **Device mgmt**: Apply DHCP/static IP, DNS, NTP, and hostname changes via Raspberry Pi tooling; mirror settings in REST and SOAP operations.
-- **UX & hardening**: Provide a minimal web UI for setup, plus audit logging, rate limits, and optional TLS termination.
 
 ## Contributing
 Pull requests are welcome. Please add tests for new behavior and keep configuration changes backward compatible.

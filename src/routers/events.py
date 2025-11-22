@@ -1,10 +1,11 @@
 """Event subscription endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.config import ScheduleEntry, get_config_manager
+from src.notifications import BaseNotificationManager, get_notification_manager
 from src.pipeline import EventMode, EventPipeline
 from src.security import require_roles
 
@@ -15,27 +16,50 @@ router = APIRouter(
 )
 config_manager = get_config_manager()
 pipeline = EventPipeline(config_manager)
+notifications: BaseNotificationManager = get_notification_manager()
 
 
 @router.get("/subscription")
-def create_subscription() -> dict[str, str]:
+def create_subscription(
+    topics: list[str] | None = None, termination_seconds: int | None = None
+) -> dict[str, str]:
     user_settings = config_manager.get_user_settings()
     status = "Enabled" if user_settings.events_enabled else "Disabled"
+    termination = datetime.now(timezone.utc) + (
+        timedelta(seconds=termination_seconds) if termination_seconds else timedelta(hours=1)
+    )
+    subscription = notifications.create_subscription(topics=topics, termination=termination)
     return {
-        "subscription_id": "sub-001",
-        "expires": datetime.utcnow().isoformat() + "Z",
-        "delivery_mode": "Push",
+        "subscription_id": subscription.token,
+        "expires": subscription.termination_time.isoformat(),
+        "delivery_mode": "PullPoint",
         "status": status,
     }
 
 
 @router.get("/pull")
-def pull_messages() -> dict[str, list[dict[str, str]]]:
+def pull_messages(
+    subscription_id: str | None = None, message_limit: int = 10
+) -> dict[str, list[dict[str, str]]]:
     user_settings = config_manager.get_user_settings()
     if not user_settings.events_enabled:
         return {"messages": []}
 
-    return {"messages": pipeline.build_notifications()}
+    messages = notifications.pull_messages(token=subscription_id, message_limit=message_limit)
+    return {"messages": messages}
+
+
+@router.post("/subscription/{subscription_id}/renew")
+def renew_subscription(subscription_id: str, termination_seconds: int = 3600) -> dict[str, str]:
+    termination = datetime.now(timezone.utc) + timedelta(seconds=termination_seconds)
+    subscription = notifications.renew(termination, token=subscription_id)
+    return {"subscription_id": subscription.token, "expires": subscription.termination_time.isoformat()}
+
+
+@router.post("/subscription/{subscription_id}/unsubscribe")
+def unsubscribe(subscription_id: str) -> dict[str, str]:
+    notifications.unsubscribe(token=subscription_id)
+    return {"subscription_id": subscription_id, "unsubscribed": datetime.now(timezone.utc).isoformat()}
 
 
 @router.post("/mode/{mode}")

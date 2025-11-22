@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Type, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 
 _ALLOWED_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
@@ -52,6 +58,88 @@ class EventPipelineMode(str, Enum):
     alarm = "alarm"
 
 
+class RecordingMode(str, Enum):
+    """Preferred recording behavior."""
+
+    continuous = "continuous"
+    schedule = "schedule"
+    on_event = "on_event"
+
+
+class NetworkMode(str, Enum):
+    """Supported network provisioning strategies."""
+
+    dhcp = "dhcp"
+    static = "static"
+
+
+class MediaSourceType(str, Enum):
+    """Source material used to build an RTSP stream."""
+
+    camera = "camera"
+    testscreen = "testscreen"
+    bouncing_ball = "bouncing_ball"
+    image = "image"
+    mpeg = "mpeg"
+
+
+class NetworkSettings(BaseModel):
+    """Network configuration options for an interface."""
+
+    mode: NetworkMode = NetworkMode.dhcp
+    interface: str = "eth0"
+    hostname: str = "onvif-nvr"
+    static_ip: Optional[str] = None
+    subnet_mask: Optional[str] = None
+    gateway: Optional[str] = None
+    dns_servers: list[str] = Field(default_factory=list)
+
+    @field_validator("static_ip", "subnet_mask", "gateway")
+    @classmethod
+    def validate_static_requirements(
+        cls, value: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
+        mode: NetworkMode = info.data.get("mode", NetworkMode.dhcp)
+        if mode == NetworkMode.static and not value:
+            raise ValueError("Static networking requires IP, subnet mask, and gateway")
+        return value
+
+
+class MediaProfileSettings(BaseModel):
+    """Video encoding parameters exposed via the ONVIF media service."""
+
+    name: str
+    token: str
+    width: int
+    height: int
+    bitrate_kbps: int = 4000
+    framerate: int = 30
+    source_type: "MediaSourceType" = Field(default_factory=lambda: MediaSourceType.camera)
+    source_location: str | None = None
+
+    @field_validator("width", "height", "bitrate_kbps", "framerate")
+    @classmethod
+    def ensure_positive(cls, value: int, info: ValidationInfo) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
+        return value
+
+    @field_validator("source_location")
+    @classmethod
+    def validate_location(cls, value: str | None, info: ValidationInfo) -> str | None:
+        source_type: MediaSourceType = info.data.get("source_type", MediaSourceType.camera)
+        if source_type in {MediaSourceType.image, MediaSourceType.mpeg} and not value:
+            raise ValueError("source_location is required for image and mpeg sources")
+        return value
+
+
+class NTPSettings(BaseModel):
+    """NTP server configuration and enablement."""
+
+    enabled: bool = True
+    servers: list[str] = Field(default_factory=lambda: ["pool.ntp.org"])
+
+
 class UserSettings(BaseModel):
     """User-tunable runtime settings."""
 
@@ -62,6 +150,11 @@ class UserSettings(BaseModel):
     event_pipeline_mode: EventPipelineMode = EventPipelineMode.event
     events_enabled: bool = True
     alarms_enabled: bool = True
+    recording_mode: RecordingMode = RecordingMode.schedule
+    recording_enabled: bool = True
+    network: NetworkSettings = Field(default_factory=NetworkSettings)
+    ntp: NTPSettings = Field(default_factory=NTPSettings)
+    media_profiles: list[MediaProfileSettings] = Field(default_factory=list)
 
 
 class DeviceMetadata(BaseModel):
@@ -150,6 +243,24 @@ class ConfigManager:
                     days=list(_ALLOWED_DAYS),
                 )
             ],
+            media_profiles=[
+                MediaProfileSettings(
+                    name="Primary 1080p",
+                    token="profile1",
+                    width=1920,
+                    height=1080,
+                    bitrate_kbps=8000,
+                    framerate=30,
+                ),
+                MediaProfileSettings(
+                    name="Secondary 720p",
+                    token="profile2",
+                    width=1280,
+                    height=720,
+                    bitrate_kbps=4000,
+                    framerate=15,
+                ),
+            ],
             digital_inputs=[
                 {"channel_id": idx + 1, "direction": "input", "name": f"DI-{idx+1}", "state": False}
                 for idx in range(4)
@@ -162,6 +273,10 @@ class ConfigManager:
             event_pipeline_mode=EventPipelineMode.event,
             events_enabled=True,
             alarms_enabled=True,
+            recording_mode=RecordingMode.schedule,
+            recording_enabled=True,
+            network=NetworkSettings(),
+            ntp=NTPSettings(),
         )
 
     def _default_device_metadata(self) -> DeviceMetadata:
