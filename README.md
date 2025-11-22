@@ -65,6 +65,15 @@ All protected routes require a WS-Security UsernameToken header. Example using t
 UsernameToken username="admin" password="admin123"
 ```
 
+If you have clear-text credentials and want to build the header value programmatically, use the helper exposed in `src/security.py`:
+```python
+from src.security import create_username_token
+
+token = create_username_token("admin", "admin123")
+# -> UsernameToken username="admin" password="admin123"
+```
+Include the resulting string in the `UsernameToken` header (case-sensitive) of your requests.
+
 ## Docker deployment
 Build and run the container (ports 8000/TCP for API and 3702/UDP for discovery):
 ```bash
