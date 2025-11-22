@@ -60,7 +60,8 @@ SERVICE_HOST=0.0.0.0 SERVICE_PORT=8000 python -m src.server
 - WS-Discovery: UDP 3702 multicast responses announcing the above address
 
 ### Example WS-Security header
-All protected routes require a WS-Security UsernameToken header. Example using the default admin account:
+All protected routes require authentication. SOAP calls prefer a WS-Security UsernameToken envelope, but HTTP `UsernameToken`
+or HTTP Basic headers are accepted as fallbacks. Example using the default admin account:
 ```
 UsernameToken username="admin" password="admin123"
 ```
