@@ -199,7 +199,9 @@ class ConfigManager:
         """Persist user settings to disk with atomic replace."""
 
         with self._lock:
-            self._write_yaml(self.user_config_path, settings.model_dump())
+            self._write_yaml(
+                self.user_config_path, settings.model_dump(mode="json")
+            )
             self._user_settings = settings
 
     def get_device_metadata(self) -> DeviceMetadata:
@@ -216,7 +218,9 @@ class ConfigManager:
         """Persist device metadata to disk with atomic replace."""
 
         with self._lock:
-            self._write_yaml(self.device_config_path, metadata.model_dump())
+            self._write_yaml(
+                self.device_config_path, metadata.model_dump(mode="json")
+            )
             self._device_metadata = metadata
 
     # Internal helpers ----------------------------------------------------
@@ -226,11 +230,15 @@ class ConfigManager:
         with self._lock:
             if not self.user_config_path.exists():
                 self._user_settings = self._default_user_settings()
-                self._write_yaml(self.user_config_path, self._user_settings.model_dump())
+                self._write_yaml(
+                    self.user_config_path,
+                    self._user_settings.model_dump(mode="json"),
+                )
             if not self.device_config_path.exists():
                 self._device_metadata = self._default_device_metadata()
                 self._write_yaml(
-                    self.device_config_path, self._device_metadata.model_dump()
+                    self.device_config_path,
+                    self._device_metadata.model_dump(mode="json"),
                 )
 
     def _default_user_settings(self) -> UserSettings:
@@ -290,7 +298,7 @@ class ConfigManager:
     ) -> T:
         if not path.exists():
             model = default_factory()
-            self._write_yaml(path, model.model_dump())
+            self._write_yaml(path, model.model_dump(mode="json"))
             return model
 
         raw_data = self._read_yaml(path)
