@@ -15,7 +15,7 @@ Minimal ONVIF Profile S-style reference service intended for DVR/NVR interoperab
 - FastAPI service exposing ONVIF-like routes for device info, media profiles/RTSP URI, PTZ controls, event pull/notifications, and recording triggers.
 - YAML-backed configuration for user settings (`config/user.yaml`) and device metadata (`config/device.yaml`) with atomic writes and validation.
 - WS-Security UsernameToken parsing plus role-based access control (`viewer`, `operator`, `admin`).
-- User management API and CLI with bcrypt-hashed passwords; default admin account `admin/admin123` generated on first run.
+- User management API and CLI with PBKDF2-hashed passwords; default admin account `admin/admin123` generated on first run.
 - Event/recording pipeline with schedulable windows, four digital inputs/outputs, and in-memory notifications persisted back to `config/user.yaml`.
 
 ## Prerequisites
@@ -43,6 +43,8 @@ Create an isolated Python environment to avoid polluting the system interpreter.
    pip install --upgrade pip
    pip install -r requirements.txt
    ```
+    If you installed dependencies before this change, rerun the install so the
+    updated password hashing dependencies are applied.
 4. (Optional) Inspect or edit default configuration generated on first run:
    - `config/device.yaml` – manufacturer/model/firmware/serial metadata
    - `config/user.yaml` – recording schedules, digital IO state, pipeline mode
@@ -108,8 +110,8 @@ All commands read/write `config/users.yaml` with atomic updates.
   - `media_profiles`: encoder settings (token, resolution, bitrate, frame rate)
 - `config/device.yaml`
   - `manufacturer`, `model`, `firmware_version`, `serial_number`, `hardware_id`, optional `developer_notes`
-- `config/users.yaml`
-  - Auto-created with admin account; stores bcrypt hashes and role assignments
+  - `config/users.yaml`
+    - Auto-created with admin account; stores PBKDF2 hashes and role assignments
 
 ## Media pipeline
 - Default profiles loaded from `config/user.yaml`:
