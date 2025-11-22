@@ -1,6 +1,8 @@
 """Lightweight SOAP facade that fronts the REST handlers with ONVIF-like envelopes."""
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import logging
 from datetime import datetime, timedelta, timezone
@@ -19,6 +21,7 @@ from src.routers import media as media_rest
 from src.routers import ptz as ptz_rest
 from src.routers import recording as recording_rest
 from src.recordings import get_recording_store
+from src.security import parse_username_token
 from src.users import UserStore, get_user_store
 
 logger = logging.getLogger(__name__)
@@ -40,30 +43,66 @@ ET.register_namespace("trc", TRC_NS)
 ET.register_namespace("tptz", PTZ_NS)
 
 
-def _require_username_token(envelope: Element, store: UserStore) -> None:
-    """Validate WS-Security UsernameToken credentials."""
+def _authenticate_credentials(username: str | None, password: str | None, store: UserStore) -> None:
+    try:
+        store.authenticate(username or "", password or "")
+    except ValueError as exc:  # pragma: no cover - delegated validation
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+        ) from exc
+
+
+def _require_username_token(envelope: Element, store: UserStore, request: Request | None) -> None:
+    """Validate credentials from WS-Security, UsernameToken header, or HTTP Basic."""
 
     security = envelope.find(f".//{{{WSSE_NS}}}Security")
-    if security is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing WS-Security Security header",
-        )
+    if security is not None:
+        username_el = security.find(f".//{{{WSSE_NS}}}Username")
+        password_el = security.find(f".//{{{WSSE_NS}}}Password")
+        if username_el is not None and password_el is not None:
+            _authenticate_credentials(username_el.text, password_el.text, store)
+            return
 
-    username_el = security.find(f".//{{{WSSE_NS}}}Username")
-    password_el = security.find(f".//{{{WSSE_NS}}}Password")
-    if username_el is None or password_el is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing UsernameToken credentials",
         )
 
-    try:
-        store.authenticate(username_el.text or "", password_el.text or "")
-    except ValueError as exc:  # pragma: no cover - delegated validation
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
-        ) from exc
+    if request:
+        token_header = request.headers.get("UsernameToken")
+        if token_header:
+            try:
+                username, password = parse_username_token(token_header)
+                _authenticate_credentials(username, password, store)
+                return
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+                ) from exc
+
+        authorization = request.headers.get("Authorization", "")
+        if authorization.lower().startswith("basic "):
+            try:
+                decoded = base64.b64decode(authorization.split(" ", 1)[1]).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Malformed Basic authorization header",
+                ) from exc
+
+            if ":" not in decoded:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Malformed Basic authorization header",
+                )
+            username, password = decoded.split(":", 1)
+            _authenticate_credentials(username, password, store)
+            return
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing WS-Security Security header",
+    )
 
 
 def _soap_envelope(body_child: Element) -> Response:
@@ -616,7 +655,7 @@ router = APIRouter(prefix="/onvif", tags=["soap"])
 async def _dispatch(service: str, request: Request, store: UserStore) -> Response:
     content = await request.body()
     envelope, operation, operation_name = _parse_operation(content)
-    _require_username_token(envelope, store)
+    _require_username_token(envelope, store, request)
 
     operations = _SERVICE_OPERATIONS.get(service)
     if not operations or operation_name not in operations:

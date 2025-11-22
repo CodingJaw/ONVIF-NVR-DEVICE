@@ -20,7 +20,7 @@ _TOKEN_PATTERN = re.compile(
 )
 
 
-def _parse_username_token(username_token: str) -> tuple[str, str]:
+def parse_username_token(username_token: str) -> tuple[str, str]:
     """Extract credentials from a UsernameToken header."""
 
     match = _TOKEN_PATTERN.search(username_token)
@@ -57,7 +57,7 @@ def verify_wsse(
         )
 
     try:
-        username, password = _parse_username_token(username_token)
+        username, password = parse_username_token(username_token)
         logger.debug(
             "Parsed UsernameToken",
             extra={
