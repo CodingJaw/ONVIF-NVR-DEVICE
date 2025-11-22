@@ -73,6 +73,16 @@ class NetworkMode(str, Enum):
     static = "static"
 
 
+class MediaSourceType(str, Enum):
+    """Source material used to build an RTSP stream."""
+
+    camera = "camera"
+    testscreen = "testscreen"
+    bouncing_ball = "bouncing_ball"
+    image = "image"
+    mpeg = "mpeg"
+
+
 class NetworkSettings(BaseModel):
     """Network configuration options for an interface."""
 
@@ -92,6 +102,34 @@ class NetworkSettings(BaseModel):
         mode: NetworkMode = info.data.get("mode", NetworkMode.dhcp)
         if mode == NetworkMode.static and not value:
             raise ValueError("Static networking requires IP, subnet mask, and gateway")
+        return value
+
+
+class MediaProfileSettings(BaseModel):
+    """Video encoding parameters exposed via the ONVIF media service."""
+
+    name: str
+    token: str
+    width: int
+    height: int
+    bitrate_kbps: int = 4000
+    framerate: int = 30
+    source_type: "MediaSourceType" = Field(default_factory=lambda: MediaSourceType.camera)
+    source_location: str | None = None
+
+    @field_validator("width", "height", "bitrate_kbps", "framerate")
+    @classmethod
+    def ensure_positive(cls, value: int, info: ValidationInfo) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
+        return value
+
+    @field_validator("source_location")
+    @classmethod
+    def validate_location(cls, value: str | None, info: ValidationInfo) -> str | None:
+        source_type: MediaSourceType = info.data.get("source_type", MediaSourceType.camera)
+        if source_type in {MediaSourceType.image, MediaSourceType.mpeg} and not value:
+            raise ValueError("source_location is required for image and mpeg sources")
         return value
 
 
@@ -116,6 +154,7 @@ class UserSettings(BaseModel):
     recording_enabled: bool = True
     network: NetworkSettings = Field(default_factory=NetworkSettings)
     ntp: NTPSettings = Field(default_factory=NTPSettings)
+    media_profiles: list[MediaProfileSettings] = Field(default_factory=list)
 
 
 class DeviceMetadata(BaseModel):
@@ -203,6 +242,24 @@ class ConfigManager:
                     end=time(hour=23, minute=59),
                     days=list(_ALLOWED_DAYS),
                 )
+            ],
+            media_profiles=[
+                MediaProfileSettings(
+                    name="Primary 1080p",
+                    token="profile1",
+                    width=1920,
+                    height=1080,
+                    bitrate_kbps=8000,
+                    framerate=30,
+                ),
+                MediaProfileSettings(
+                    name="Secondary 720p",
+                    token="profile2",
+                    width=1280,
+                    height=720,
+                    bitrate_kbps=4000,
+                    framerate=15,
+                ),
             ],
             digital_inputs=[
                 {"channel_id": idx + 1, "direction": "input", "name": f"DI-{idx+1}", "state": False}
