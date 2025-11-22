@@ -1,5 +1,9 @@
 fastapi==0.110.0
 uvicorn[standard]==0.27.1
+python-multipart==0.0.9
 zeep==4.2.1
 pyyaml==6.0.1
 passlib[bcrypt]==1.7.4
+# bcrypt 4.0+ drops __about__.__version__, which passlib 1.7.x expects; pin
+# to a compatible release to avoid runtime backend load errors.
+bcrypt==3.2.2
