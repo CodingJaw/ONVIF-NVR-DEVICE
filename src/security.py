@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable, Optional
 
 from fastapi import Depends, Header, HTTPException, status
 
 from src.users import AuthenticatedUser, UserStore, get_user_store
+
+
+logger = logging.getLogger(__name__)
 
 
 _TOKEN_PATTERN = re.compile(
@@ -30,6 +34,12 @@ def _parse_username_token(username_token: str) -> tuple[str, str]:
     raise ValueError("Malformed UsernameToken header")
 
 
+def create_username_token(username: str, password: str) -> str:
+    """Create a WS-Security UsernameToken header value from clear-text credentials."""
+
+    return f'UsernameToken username="{username}" password="{password}"'
+
+
 def verify_wsse(
     username_token: Optional[str] = Header(default=None, convert_underscores=False),
     store: UserStore = Depends(get_user_store),
@@ -37,6 +47,10 @@ def verify_wsse(
     """Validate WS-Security UsernameToken credentials using the configured user store."""
 
     if not username_token:
+        logger.debug(
+            "WSSE authentication failed",
+            extra={"event": "wsse_auth", "reason": "missing_username_token"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing WS-Security UsernameToken header",
@@ -44,8 +58,20 @@ def verify_wsse(
 
     try:
         username, password = _parse_username_token(username_token)
+        logger.debug(
+            "Parsed UsernameToken",
+            extra={
+                "event": "wsse_auth",
+                "username": username,
+                "password_masked": "*" * len(password) if password else "***",
+            },
+        )
         user = store.authenticate(username, password)
     except ValueError as exc:
+        logger.debug(
+            "WSSE authentication failed",
+            extra={"event": "wsse_auth", "reason": str(exc)},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
