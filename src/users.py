@@ -194,7 +194,7 @@ def _print_user(user: User) -> None:
     print(json.dumps({"username": user.username, "roles": sorted(user.roles)}, indent=2))
 
 
-def _cli_list(store: UserStore, args: argparse.Namespace) -> None:  # noqa: ARG001
+def _cli_list(store: UserStore, args: argparse.Namespace | None = None) -> None:  # noqa: ARG001
     for user in store.list_users():
         _print_user(user)
 
