@@ -18,8 +18,15 @@ from src.config import (
     UserSettings,
     get_config_manager,
 )
+from src.device_management import (
+    apply_all_from_config,
+    get_network_settings as load_network_settings,
+    get_ntp_settings as load_ntp_settings,
+    set_hostname,
+    set_network_settings,
+    set_ntp_settings,
+)
 from src.security import require_roles
-from src.system_control import apply_all, apply_hostname, apply_network, apply_ntp
 
 
 router = APIRouter(
@@ -82,11 +89,13 @@ class RecordingUpdate(BaseModel):
 @router.get("/status")
 def get_status() -> dict:
     settings = _load_settings()
+    network = load_network_settings()
+    ntp = load_ntp_settings()
     metadata = config_manager.get_device_metadata()
     return {
-        "network": settings.network.model_dump(),
-        "ntp": settings.ntp.model_dump(),
-        "hostname": settings.network.hostname,
+        "network": network.model_dump(),
+        "ntp": ntp.model_dump(),
+        "hostname": network.hostname,
         "events": {
             "events_enabled": settings.events_enabled,
             "alarms_enabled": settings.alarms_enabled,
@@ -103,7 +112,7 @@ def get_status() -> dict:
 
 @router.get("/network")
 def get_network() -> NetworkSettings:
-    return _load_settings().network
+    return load_network_settings()
 
 
 @router.put(
@@ -111,26 +120,19 @@ def get_network() -> NetworkSettings:
     dependencies=[Depends(require_roles(["operator", "admin"]))],
 )
 def update_network(payload: NetworkSettings) -> dict:
-    settings = _load_settings()
-    settings.network = payload
-    config_manager.save_user_settings(settings)
-    apply_network(payload)
-    apply_hostname(payload.hostname)
-    return {"status": "updated", "network": payload}
+    updated = set_network_settings(payload)
+    return {"status": "updated", "network": updated}
 
 
 @router.get("/ntp")
 def get_ntp() -> NTPSettings:
-    return _load_settings().ntp
+    return load_ntp_settings()
 
 
 @router.put("/ntp", dependencies=[Depends(require_roles(["operator", "admin"]))])
 def update_ntp(payload: NTPSettings) -> dict:
-    settings = _load_settings()
-    settings.ntp = payload
-    config_manager.save_user_settings(settings)
-    apply_ntp(payload)
-    return {"status": "updated", "ntp": payload}
+    updated = set_ntp_settings(payload)
+    return {"status": "updated", "ntp": updated}
 
 
 @router.put(
@@ -138,11 +140,8 @@ def update_ntp(payload: NTPSettings) -> dict:
     dependencies=[Depends(require_roles(["operator", "admin"]))],
 )
 def update_hostname(hostname: str) -> dict:
-    settings = _load_settings()
-    settings.network.hostname = hostname
-    config_manager.save_user_settings(settings)
-    apply_hostname(hostname)
-    return {"status": "updated", "hostname": hostname}
+    updated = set_hostname(hostname)
+    return {"status": "updated", "hostname": updated}
 
 
 @router.get("/metadata")
@@ -218,8 +217,7 @@ def update_recording(update: RecordingUpdate) -> dict:
     dependencies=[Depends(require_roles(["operator", "admin"]))],
 )
 def apply_changes() -> dict:
-    settings = _load_settings()
-    apply_all(settings.network, settings.ntp)
+    apply_all_from_config()
     return {"status": "applied"}
 
 

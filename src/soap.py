@@ -1,6 +1,7 @@
 """Lightweight SOAP facade that fronts the REST handlers with ONVIF-like envelopes."""
 from __future__ import annotations
 
+import ipaddress
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict
@@ -9,7 +10,7 @@ from xml.etree.ElementTree import Element
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from src.config import get_config_manager
+from src.config import NetworkMode, NetworkSettings, NTPSettings, get_config_manager
 from src.notifications import get_notification_manager
 from src.pipeline import EventPipeline
 from src.routers import device as device_rest
@@ -212,6 +213,128 @@ def _device_get_information(operation: Element | None = None) -> Response:
     for key, value in info.items():
         child = ET.SubElement(response, f"{{{TDS_NS}}}{key.title().replace('_', '')}")
         child.text = value
+    return _soap_envelope(response)
+
+
+def _device_get_hostname(operation: Element | None = None) -> Response:
+    hostname = device_rest.get_hostname().get("hostname", "")
+    response = ET.Element(f"{{{TDS_NS}}}GetHostnameResponse")
+    info = ET.SubElement(response, f"{{{TDS_NS}}}HostnameInformation")
+    ET.SubElement(info, f"{{{TDS_NS}}}Name").text = hostname
+    return _soap_envelope(response)
+
+
+def _device_set_hostname(operation: Element | None = None) -> Response:
+    hostname = operation.findtext(".//{*}Name") if operation is not None else None
+    if not hostname:
+        return _fault("Hostname missing")
+    device_rest.set_hostname_value(hostname)
+    response = ET.Element(f"{{{TDS_NS}}}SetHostnameResponse")
+    return _soap_envelope(response)
+
+
+def _device_get_ntp(operation: Element | None = None) -> Response:
+    settings = NTPSettings(**device_rest.get_ntp_configuration())
+    response = ET.Element(f"{{{TDS_NS}}}GetNTPResponse")
+    info = ET.SubElement(response, f"{{{TDS_NS}}}NTPInformation")
+    ET.SubElement(info, f"{{{TDS_NS}}}FromDHCP").text = str(settings.enabled).lower()
+    for server in settings.servers:
+        entry = ET.SubElement(info, f"{{{TDS_NS}}}NTPManual")
+        ET.SubElement(entry, f"{{{TDS_NS}}}Address").text = server
+    return _soap_envelope(response)
+
+
+def _device_set_ntp(operation: Element | None = None) -> Response:
+    enabled_text = operation.findtext(".//{*}FromDHCP") if operation is not None else None
+    enabled = True if enabled_text is None else enabled_text.lower() == "true"
+    servers = [
+        entry.text
+        for entry in operation.findall(".//{*}NTPManual//{*}Address")
+        if entry.text
+    ] if operation is not None else []
+    settings = NTPSettings(enabled=enabled, servers=servers or ["pool.ntp.org"])
+    device_rest.set_ntp_configuration(settings)
+    response = ET.Element(f"{{{TDS_NS}}}SetNTPResponse")
+    return _soap_envelope(response)
+
+
+def _device_get_dns(operation: Element | None = None) -> Response:
+    settings = NetworkSettings(**device_rest.get_network_configuration())
+    response = ET.Element(f"{{{TDS_NS}}}GetDNSResponse")
+    info = ET.SubElement(response, f"{{{TDS_NS}}}DNSInformation")
+    ET.SubElement(info, f"{{{TDS_NS}}}FromDHCP").text = str(
+        settings.mode == NetworkMode.dhcp
+    ).lower()
+    manual = ET.SubElement(info, f"{{{TDS_NS}}}DNSManual")
+    for server in settings.dns_servers:
+        ET.SubElement(manual, f"{{{TDS_NS}}}Address").text = server
+    return _soap_envelope(response)
+
+
+def _device_set_dns(operation: Element | None = None) -> Response:
+    servers = [
+        entry.text
+        for entry in operation.findall(".//{*}DNSManual//{*}Address")
+        if entry.text
+    ] if operation is not None else []
+    settings = NetworkSettings(**device_rest.get_network_configuration())
+    if servers:
+        settings.dns_servers = servers
+    device_rest.set_network_configuration(settings)
+    response = ET.Element(f"{{{TDS_NS}}}SetDNSResponse")
+    return _soap_envelope(response)
+
+
+def _device_get_network_interfaces(operation: Element | None = None) -> Response:
+    settings = NetworkSettings(**device_rest.get_network_configuration())
+    response = ET.Element(f"{{{TDS_NS}}}GetNetworkInterfacesResponse")
+    iface = ET.SubElement(response, f"{{{TDS_NS}}}NetworkInterfaces")
+    iface.set("token", settings.interface)
+    ET.SubElement(iface, f"{{{TDS_NS}}}Enabled").text = "true"
+
+    ipv4 = ET.SubElement(iface, f"{{{TDS_NS}}}IPv4")
+    config = ET.SubElement(ipv4, f"{{{TDS_NS}}}Config")
+    dhcp = settings.mode == NetworkMode.dhcp
+    ET.SubElement(config, f"{{{TDS_NS}}}DHCP").text = str(dhcp).lower()
+
+    if settings.mode == NetworkMode.static:
+        manual = ET.SubElement(config, f"{{{TDS_NS}}}Manual")
+        if settings.static_ip:
+            ET.SubElement(manual, f"{{{TDS_NS}}}Address").text = settings.static_ip
+        prefix = ipaddress.IPv4Network(
+            f"0.0.0.0/{settings.subnet_mask or '255.255.255.0'}"
+        ).prefixlen
+        ET.SubElement(manual, f"{{{TDS_NS}}}PrefixLength").text = str(prefix)
+        if settings.gateway:
+            gateway_el = ET.SubElement(config, f"{{{TDS_NS}}}Gateway")
+            ET.SubElement(gateway_el, f"{{{TDS_NS}}}IPv4Address").text = settings.gateway
+    return _soap_envelope(response)
+
+
+def _device_set_network_interfaces(operation: Element | None = None) -> Response:
+    dhcp_text = operation.findtext(".//{*}DHCP") if operation is not None else None
+    mode = NetworkMode.dhcp if dhcp_text and dhcp_text.lower() == "true" else NetworkMode.static
+    manual = operation.find(".//{*}Manual") if operation is not None else None
+    ip_address = manual.findtext(".//{*}Address") if manual is not None else None
+    prefix_text = manual.findtext(".//{*}PrefixLength") if manual is not None else None
+    subnet = None
+    if prefix_text:
+        try:
+            subnet = str(ipaddress.IPv4Network(f"0.0.0.0/{prefix_text}").netmask)
+        except Exception:  # pragma: no cover - defensive
+            subnet = None
+    gateway = operation.findtext(".//{*}Gateway//{*}IPv4Address") if operation is not None else None
+
+    settings = NetworkSettings(**device_rest.get_network_configuration())
+    settings.mode = mode
+    if mode == NetworkMode.static:
+        settings.static_ip = ip_address or settings.static_ip
+        settings.subnet_mask = subnet or settings.subnet_mask
+        settings.gateway = gateway or settings.gateway
+
+    device_rest.set_network_configuration(settings)
+    response = ET.Element(f"{{{TDS_NS}}}SetNetworkInterfacesResponse")
+    ET.SubElement(response, f"{{{TDS_NS}}}Reboot").text = "false"
     return _soap_envelope(response)
 
 
@@ -440,6 +563,14 @@ def _ptz_stop(operation: Element | None = None) -> Response:
 _DEVICE_OPERATIONS: Dict[str, Callable[[Element | None], Response]] = {
     "GetCapabilities": _device_get_capabilities,
     "GetDeviceInformation": _device_get_information,
+    "GetNetworkInterfaces": _device_get_network_interfaces,
+    "SetNetworkInterfaces": _device_set_network_interfaces,
+    "GetDNS": _device_get_dns,
+    "SetDNS": _device_set_dns,
+    "GetNTP": _device_get_ntp,
+    "SetNTP": _device_set_ntp,
+    "GetHostname": _device_get_hostname,
+    "SetHostname": _device_set_hostname,
 }
 
 _MEDIA_OPERATIONS: Dict[str, Callable[[Element | None], Response]] = {
