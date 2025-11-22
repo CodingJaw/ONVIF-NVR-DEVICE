@@ -17,6 +17,7 @@ from src.routers import events as events_rest
 from src.routers import media as media_rest
 from src.routers import ptz as ptz_rest
 from src.routers import recording as recording_rest
+from src.recordings import get_recording_store
 from src.users import UserStore, get_user_store
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ def _parse_operation(content: bytes) -> tuple[Element, Element, str]:
 config_manager = get_config_manager()
 pipeline = EventPipeline(config_manager)
 notifications = get_notification_manager()
+recording_store = get_recording_store()
 
 
 def _parse_duration(duration_text: str | None, default_seconds: int = 3600) -> datetime:
@@ -316,10 +318,105 @@ def _recording_get_jobs(operation: Element | None = None) -> Response:
 
 
 def _recording_create_job(operation: Element | None = None) -> Response:
-    created = recording_rest.create_recording_job("profile1")
+    source = operation.findtext(".//{*}SourceToken") if operation is not None else None
+    created = recording_store.create_job(source or "profile1")
+    pipeline.add_recording_trigger(created.source_token)
     response = ET.Element(f"{{{TRC_NS}}}CreateRecordingJobResponse")
-    ET.SubElement(response, f"{{{TRC_NS}}}JobToken").text = created["id"]
-    ET.SubElement(response, f"{{{TRC_NS}}}JobState").text = created["status"]
+    ET.SubElement(response, f"{{{TRC_NS}}}JobToken").text = created.job_token
+    ET.SubElement(response, f"{{{TRC_NS}}}JobState").text = created.state
+    return _soap_envelope(response)
+
+
+def _recording_get_job_state(operation: Element | None = None) -> Response:
+    token = operation.findtext(".//{*}JobToken") if operation is not None else None
+    if not token:
+        return _fault("JobToken missing")
+    try:
+        job = recording_store.get_job(token)
+    except Exception:
+        return _fault(f"Job {token} not found")
+    response = ET.Element(f"{{{TRC_NS}}}GetRecordingJobStateResponse")
+    ET.SubElement(response, f"{{{TRC_NS}}}JobToken").text = token
+    ET.SubElement(response, f"{{{TRC_NS}}}State").text = job.state
+    for track_token, state in job.track_states.items():
+        track_el = ET.SubElement(response, f"{{{TRC_NS}}}Tracks")
+        ET.SubElement(track_el, f"{{{TRC_NS}}}TrackToken").text = track_token
+        ET.SubElement(track_el, f"{{{TRC_NS}}}State").text = state
+    return _soap_envelope(response)
+
+
+def _recording_find_recordings(operation: Element | None = None) -> Response:
+    start_text = operation.findtext(".//{*}StartTime") if operation is not None else None
+    end_text = operation.findtext(".//{*}EndTime") if operation is not None else None
+    source_token = operation.findtext(".//{*}SourceToken") if operation is not None else None
+    try:
+        start_time = datetime.fromisoformat(start_text) if start_text else datetime.min.replace(tzinfo=timezone.utc)
+        end_time = datetime.fromisoformat(end_text) if end_text else datetime.max.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return _fault("Invalid time range")
+    results = recording_store.search_recordings(start_time, end_time, source_token)
+    response = ET.Element(f"{{{TRC_NS}}}FindRecordingsResponse")
+    for rec in results:
+        info = ET.SubElement(response, f"{{{TRC_NS}}}RecordingInformation")
+        ET.SubElement(info, f"{{{TRC_NS}}}RecordingToken").text = rec.recording_token
+        ET.SubElement(info, f"{{{TRC_NS}}}SourceToken").text = rec.source_token
+        ET.SubElement(info, f"{{{TRC_NS}}}EarliestRecording").text = rec.start_time.replace(tzinfo=timezone.utc).isoformat()
+        ET.SubElement(info, f"{{{TRC_NS}}}LatestRecording").text = rec.end_time.replace(tzinfo=timezone.utc).isoformat()
+        for track in rec.tracks:
+            track_el = ET.SubElement(info, f"{{{TRC_NS}}}Tracks")
+            ET.SubElement(track_el, f"{{{TRC_NS}}}TrackToken").text = track.track_token
+            ET.SubElement(track_el, f"{{{TRC_NS}}}StartTime").text = track.start_time.replace(tzinfo=timezone.utc).isoformat()
+            ET.SubElement(track_el, f"{{{TRC_NS}}}EndTime").text = track.end_time.replace(tzinfo=timezone.utc).isoformat()
+    return _soap_envelope(response)
+
+
+def _recording_get_recording_information(operation: Element | None = None) -> Response:
+    recording_token = operation.findtext(".//{*}RecordingToken") if operation is not None else None
+    if not recording_token:
+        return _fault("RecordingToken missing")
+    try:
+        rec = recording_store.get_recording(recording_token)
+    except ValueError:
+        return _fault(f"Recording {recording_token} not found")
+    response = ET.Element(f"{{{TRC_NS}}}GetRecordingInformationResponse")
+    info = ET.SubElement(response, f"{{{TRC_NS}}}RecordingInformation")
+    ET.SubElement(info, f"{{{TRC_NS}}}RecordingToken").text = rec.recording_token
+    ET.SubElement(info, f"{{{TRC_NS}}}SourceToken").text = rec.source_token
+    ET.SubElement(info, f"{{{TRC_NS}}}EarliestRecording").text = rec.start_time.replace(tzinfo=timezone.utc).isoformat()
+    ET.SubElement(info, f"{{{TRC_NS}}}LatestRecording").text = rec.end_time.replace(tzinfo=timezone.utc).isoformat()
+    for track in rec.tracks:
+        track_el = ET.SubElement(info, f"{{{TRC_NS}}}Tracks")
+        ET.SubElement(track_el, f"{{{TRC_NS}}}TrackToken").text = track.track_token
+        ET.SubElement(track_el, f"{{{TRC_NS}}}StartTime").text = track.start_time.replace(tzinfo=timezone.utc).isoformat()
+        ET.SubElement(track_el, f"{{{TRC_NS}}}EndTime").text = track.end_time.replace(tzinfo=timezone.utc).isoformat()
+    return _soap_envelope(response)
+
+
+def _recording_get_replay_uri(operation: Element | None = None) -> Response:
+    recording_token = operation.findtext(".//{*}RecordingToken") if operation is not None else None
+    if not recording_token:
+        return _fault("RecordingToken missing")
+    try:
+        recording_store.get_recording(recording_token)
+    except ValueError:
+        return _fault(f"Recording {recording_token} not found")
+    response = ET.Element(f"{{{TRC_NS}}}GetReplayUriResponse")
+    ET.SubElement(response, f"{{{TRC_NS}}}Uri").text = f"rtsp://localhost:8554/{recording_token}"
+    return _soap_envelope(response)
+
+
+def _recording_export_recorded_data(operation: Element | None = None) -> Response:
+    recording_token = operation.findtext(".//{*}RecordingToken") if operation is not None else None
+    track_token = operation.findtext(".//{*}TrackToken") if operation is not None else None
+    if not recording_token:
+        return _fault("RecordingToken missing")
+    try:
+        export_job = recording_store.create_export_job(recording_token, track_token)
+    except ValueError:
+        return _fault(f"Recording {recording_token} not found")
+    response = ET.Element(f"{{{TRC_NS}}}ExportRecordedDataResponse")
+    ET.SubElement(response, f"{{{TRC_NS}}}JobToken").text = export_job.job_token
+    ET.SubElement(response, f"{{{TRC_NS}}}State").text = export_job.state
     return _soap_envelope(response)
 
 
@@ -360,6 +457,11 @@ _EVENTS_OPERATIONS: Dict[str, Callable[[Element | None], Response]] = {
 _RECORDING_OPERATIONS: Dict[str, Callable[[Element | None], Response]] = {
     "GetRecordingJobs": _recording_get_jobs,
     "CreateRecordingJob": _recording_create_job,
+    "GetRecordingJobState": _recording_get_job_state,
+    "FindRecordings": _recording_find_recordings,
+    "GetRecordingInformation": _recording_get_recording_information,
+    "GetReplayUri": _recording_get_replay_uri,
+    "ExportRecordedData": _recording_export_recorded_data,
 }
 
 _PTZ_OPERATIONS: Dict[str, Callable[[Element | None], Response]] = {
