@@ -48,9 +48,15 @@ Create an isolated Python environment to avoid polluting the system interpreter.
    - `config/user.yaml` – recording schedules, digital IO state, pipeline mode
 
 ## Running the service (local)
-Start the FastAPI app with the built-in WS-Discovery responder:
+Start the FastAPI app with the built-in WS-Discovery responder. The helper runner
+reads `SERVICE_HOST`/`SERVICE_PORT` and passes them to Uvicorn automatically:
 ```bash
-SERVICE_HOST=0.0.0.0 SERVICE_PORT=8000 uvicorn src.main:app
+SERVICE_HOST=0.0.0.0 SERVICE_PORT=8000 ./scripts/run_uvicorn.sh
+```
+If you prefer the raw Uvicorn CLI, include the flags explicitly so the binding
+matches your environment:
+```bash
+uvicorn src.main:app --host "${SERVICE_HOST:-0.0.0.0}" --port "${SERVICE_PORT:-8000}"
 ```
 - REST API: `http://<host>:8000`
 - RTSP server: `rtsp://<host>:8554/<profile_token>`
