@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable, Optional
 
 from fastapi import Depends, Header, HTTPException, status
 
 from src.users import AuthenticatedUser, UserStore, get_user_store
+
+
+logger = logging.getLogger(__name__)
 
 
 _TOKEN_PATTERN = re.compile(
@@ -37,6 +41,7 @@ def verify_wsse(
     """Validate WS-Security UsernameToken credentials using the configured user store."""
 
     if not username_token:
+        logger.debug("WS-Security UsernameToken header missing")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing WS-Security UsernameToken header",
@@ -44,8 +49,10 @@ def verify_wsse(
 
     try:
         username, password = _parse_username_token(username_token)
+        logger.debug("Authenticating WS-Security user '%s'", username)
         user = store.authenticate(username, password)
     except ValueError as exc:
+        logger.debug("Failed to parse UsernameToken: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
