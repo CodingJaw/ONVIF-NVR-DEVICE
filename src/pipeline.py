@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Iterable, List
 
 from src.config import ConfigManager, EventPipelineMode, ScheduleEntry
+from src.notifications import get_notification_manager
 
 
 class EventMode(str, Enum):
@@ -48,6 +49,7 @@ class EventPipeline:
     def __init__(self, config_manager: ConfigManager) -> None:
         self._config_manager = config_manager
         self._state = self._load_from_config()
+        self._notifications = get_notification_manager()
 
     # State helpers -----------------------------------------------------
     def _load_from_config(self) -> EventPipelineState:
@@ -82,22 +84,53 @@ class EventPipeline:
             if channel.channel_id == channel_id:
                 channel.toggle(value)
                 self._persist_state()
+                topic = f"tns1:Device/IO/{channel.direction.title()}{channel.channel_id}/LogicalState"
+                self._notifications.enqueue_notification(
+                    topic,
+                    {
+                        "Source": channel.name,
+                        "State": "true" if channel.state else "false",
+                    },
+                )
                 return channel
         raise ValueError(f"Channel {channel_id} not found for {direction}")
 
     def add_schedule(self, schedule: ScheduleEntry) -> list[ScheduleEntry]:
         self._state.schedules.append(schedule)
         self._persist_state()
+        self._notifications.enqueue_notification(
+            "tns1:Recording/Configuration/Schedule",
+            {
+                "Name": schedule.name,
+                "StartTime": schedule.start.isoformat(),
+                "EndTime": schedule.end.isoformat(),
+                "Days": ",".join(schedule.days),
+            },
+        )
         return self._state.schedules
 
     def replace_schedules(self, schedules: Iterable[ScheduleEntry]) -> list[ScheduleEntry]:
         self._state.schedules = list(schedules)
         self._persist_state()
+        for schedule in self._state.schedules:
+            self._notifications.enqueue_notification(
+                "tns1:Recording/Configuration/Schedule",
+                {
+                    "Name": schedule.name,
+                    "StartTime": schedule.start.isoformat(),
+                    "EndTime": schedule.end.isoformat(),
+                    "Days": ",".join(schedule.days),
+                },
+            )
         return self._state.schedules
 
     def add_recording_trigger(self, source: str) -> list[str]:
         self._state.recording_triggers.append(source)
         self._persist_state()
+        self._notifications.enqueue_notification(
+            "tns1:Recording/Control/JobState",
+            {"Source": source, "State": "Active"},
+        )
         return self._state.recording_triggers
 
     # Notifications -----------------------------------------------------
