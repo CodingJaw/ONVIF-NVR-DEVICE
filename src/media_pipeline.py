@@ -68,6 +68,22 @@ class MediaPipelineInstance:
             )
             logger.debug("Pipeline command: %s", self.last_pipeline)
 
+    def apply_profile_update(self, profile: MediaProfileSettings) -> None:
+        """Replace the profile and restart the pipeline if it was active."""
+
+        with self._lock:
+            self.profile = profile
+            was_running = self.running
+            if was_running:
+                self.running = False
+                self.last_pipeline = ""
+
+        if was_running:
+            logger.info(
+                "Restarting media pipeline for %s after parameter update", self.profile.token
+            )
+            self.ensure_running()
+
     def _build_gstreamer_pipeline(self) -> str:
         """Construct a libcamera-friendly H.264 pipeline string."""
 
@@ -192,7 +208,7 @@ class MediaPipelineManager:
                 if v is not None
             }
         )
-        pipeline.profile = updated_profile
+        pipeline.apply_profile_update(updated_profile)
         self._persist_profiles()
         return self._serialize(pipeline)
 
